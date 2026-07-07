@@ -82,6 +82,7 @@
   #uploadZone{
     display:flex;align-items:center;justify-content:center;min-height:60vh;
   }
+  #uploadZone:empty{display:none;min-height:0;}
   .upload-box{
     max-width:520px;width:100%;text-align:center;
     border:1.5px dashed var(--green-border);
@@ -1669,6 +1670,9 @@ function setupAfterLoad(){
   state.availableMonths = computeAvailableMonths(state.records);
   state.selectedMonth = state.availableMonths[0] || {year:new Date().getFullYear(), month:new Date().getMonth()};
   state.selectedStores = new Set(STORE_KEYS);
+  const uz = document.getElementById('uploadZone');
+  uz.style.display='none';
+  uz.innerHTML='';
   renderStatusBar();
   renderDashboardShell();
   recalcAll();
