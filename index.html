@@ -231,6 +231,46 @@
     height:280px;display:flex;align-items:center;justify-content:center;text-align:center;
     color:var(--muted);font-size:13px;padding:20px;background:var(--bg-soft);border-radius:var(--radius-sm);
   }
+  .btn-adjust{margin-top:10px;padding:6px 12px;font-size:11.5px;}
+
+  /* ---------- Modal de seleção ---------- */
+  .modal-overlay{
+    position:fixed;inset:0;background:rgba(13,20,18,0.45);z-index:100;
+    display:flex;align-items:center;justify-content:center;padding:20px;
+  }
+  .modal-box{
+    background:#fff;border-radius:var(--radius);width:100%;max-width:640px;
+    max-height:82vh;display:flex;flex-direction:column;overflow:hidden;
+    box-shadow:0 16px 48px rgba(10,20,15,0.25);
+  }
+  .modal-head{
+    background:var(--green);color:#fff;padding:16px 20px;
+    display:flex;justify-content:space-between;align-items:center;gap:12px;
+  }
+  .modal-head h3{margin:0;font-size:16px;}
+  .modal-head .modal-close{
+    background:transparent;border:none;color:#fff;font-size:20px;cursor:pointer;line-height:1;
+  }
+  .modal-toolbar{
+    display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;
+    padding:12px 20px;border-bottom:1px solid var(--green-border);font-size:12.5px;
+  }
+  .modal-toolbar a{color:var(--green);font-weight:700;cursor:pointer;text-decoration:none;margin-right:14px;}
+  .modal-count{color:var(--muted);}
+  .modal-list{overflow-y:auto;padding:8px 12px;flex:1;}
+  .modal-item{
+    display:flex;align-items:flex-start;gap:10px;padding:9px 8px;border-radius:var(--radius-sm);
+    cursor:pointer;border-bottom:1px solid rgba(10,107,44,0.07);
+  }
+  .modal-item:hover{background:var(--green-bg);}
+  .modal-item input{accent-color:var(--green);width:16px;height:16px;margin-top:2px;flex:0 0 auto;}
+  .modal-item .mi-nome{font-weight:600;font-size:13.5px;}
+  .modal-item .mi-det{font-size:11.5px;color:var(--muted);margin-top:2px;}
+  .modal-item.excluded .mi-nome{color:var(--muted);text-decoration:line-through;}
+  .modal-foot{
+    padding:12px 20px;border-top:1px solid var(--green-border);
+    display:flex;justify-content:flex-end;gap:10px;
+  }
 
   /* ---------- Brand topbar ---------- */
   .brand-topbar{
@@ -404,6 +444,8 @@ const state = {
   selectedStores: new Set(STORE_KEYS),
   sortDir: null, // null | 'asc' | 'desc'
   activeTab: 'headcount',
+  excludedAdm: new Set(), // eventos de admissão desconsiderados no turnover
+  excludedDem: new Set(), // eventos de demissão desconsiderados no turnover
   charts: {}
 };
 
@@ -630,22 +672,54 @@ function getTotalAtivos(stores, year, month){
   return sum;
 }
 
+function admEventKey(r){ return normalize(r.nome)+'|'+r.storeKey+'|'+r.admissao.getTime(); }
+function demEventKey(r){ return normalize(r.nome)+'|'+r.storeKey+'|'+r.rescisao.getTime(); }
+
 function getAdmissoesDemissoesMes(stores, year, month){
   let adm = 0, dem = 0;
   const seenAdm = new Set(), seenDem = new Set();
   state.records.forEach(r=>{
     if(!r.storeKey || !stores.includes(r.storeKey)) return;
-    const key = normalize(r.nome)+'|'+r.storeKey;
     if(r.admissao && r.admissao.getFullYear()===year && r.admissao.getMonth()===month){
-      const admKey = key+'|'+r.admissao.getTime();
-      if(!seenAdm.has(admKey)){ seenAdm.add(admKey); adm++; }
+      const admKey = admEventKey(r);
+      if(!seenAdm.has(admKey) && !state.excludedAdm.has(admKey)){ seenAdm.add(admKey); adm++; }
     }
     if(r.rescisao && r.rescisao.getFullYear()===year && r.rescisao.getMonth()===month){
-      const demKey = key+'|'+r.rescisao.getTime();
-      if(!seenDem.has(demKey)){ seenDem.add(demKey); dem++; }
+      const demKey = demEventKey(r);
+      if(!seenDem.has(demKey) && !state.excludedDem.has(demKey)){ seenDem.add(demKey); dem++; }
     }
   });
   return {adm, dem};
+}
+
+// Listas nominais de eventos do mês (sem aplicar exclusões — inclui flag "excluded" para a UI)
+function getAdmissoesListMes(stores, year, month){
+  const seen = new Set();
+  const list = [];
+  state.records.forEach(r=>{
+    if(!r.storeKey || !stores.includes(r.storeKey)) return;
+    if(!r.admissao || r.admissao.getFullYear()!==year || r.admissao.getMonth()!==month) return;
+    const key = admEventKey(r);
+    if(seen.has(key)) return;
+    seen.add(key);
+    list.push({key, r, excluded: state.excludedAdm.has(key)});
+  });
+  list.sort((a,b)=> a.r.nome.localeCompare(b.r.nome));
+  return list;
+}
+function getDemissoesListMes(stores, year, month){
+  const seen = new Set();
+  const list = [];
+  state.records.forEach(r=>{
+    if(!r.storeKey || !stores.includes(r.storeKey)) return;
+    if(!r.rescisao || r.rescisao.getFullYear()!==year || r.rescisao.getMonth()!==month) return;
+    const key = demEventKey(r);
+    if(seen.has(key)) return;
+    seen.add(key);
+    list.push({key, r, excluded: state.excludedDem.has(key)});
+  });
+  list.sort((a,b)=> a.r.nome.localeCompare(b.r.nome));
+  return list;
 }
 
 // Turnover do mês = ((Admissões + Demissões) / 2) ÷ Total de colaboradores ativos no mês
@@ -685,8 +759,8 @@ function getDismissalsInWindow(stores, year, month, monthsWindow){
     if(!r.storeKey || !stores.includes(r.storeKey)) return;
     if(!r.rescisao) return;
     if(r.rescisao < start || r.rescisao > end) return;
-    const key = normalize(r.nome)+'|'+r.storeKey+'|'+r.rescisao.getTime();
-    if(seen.has(key)) return;
+    const key = demEventKey(r);
+    if(seen.has(key) || state.excludedDem.has(key)) return;
     seen.add(key);
     result.push(r);
   });
@@ -964,12 +1038,14 @@ function renderDashboardShell(){
         <div class="card kpi-card">
           <div class="kpi-label">Admissões no Mês</div>
           <div class="kpi-value mono" id="kpiAdmissoesMes">-</div>
-          <div class="kpi-sub">Entradas no período</div>
+          <div class="kpi-sub" id="kpiAdmSub">Entradas no período</div>
+          <button class="btn btn-secondary btn-adjust" id="btnAdjustAdm">✎ Selecionar funcionários</button>
         </div>
         <div class="card kpi-card">
           <div class="kpi-label">Demissões no Mês</div>
           <div class="kpi-value mono" id="kpiDemissoesMes">-</div>
-          <div class="kpi-sub">Saídas no período</div>
+          <div class="kpi-sub" id="kpiDemSub">Saídas no período</div>
+          <button class="btn btn-secondary btn-adjust" id="btnAdjustDem">✎ Selecionar funcionários</button>
         </div>
         <div class="card kpi-card">
           <div class="kpi-label">Turnover 12 meses</div>
@@ -1067,6 +1143,8 @@ function renderDashboardShell(){
 
   document.getElementById('btnExportImg').onclick = exportAsImage;
   document.getElementById('btnGerarBase').onclick = gerarBaseAtivos;
+  document.getElementById('btnAdjustAdm').onclick = ()=>openAdjustModal('adm');
+  document.getElementById('btnAdjustDem').onclick = ()=>openAdjustModal('dem');
 
   document.getElementById('btnSortDif').onclick = ()=>{
     if(state.sortDir === null) state.sortDir = 'desc';
@@ -1558,6 +1636,14 @@ function recalcTurnover(){
   document.getElementById('kpiDemissoesMes').textContent = dem;
   document.getElementById('kpiTurnover12m').textContent = fmtPct(rate12m);
 
+  // Contagem de desconsiderados no mês atual (para o subtítulo dos cards)
+  const admList = getAdmissoesListMes(stores, year, month);
+  const demList = getDemissoesListMes(stores, year, month);
+  const admExcl = admList.filter(i=>i.excluded).length;
+  const demExcl = demList.filter(i=>i.excluded).length;
+  document.getElementById('kpiAdmSub').textContent = admExcl ? `Entradas no período · ${admExcl} desconsiderada(s)` : 'Entradas no período';
+  document.getElementById('kpiDemSub').textContent = demExcl ? `Saídas no período · ${demExcl} desconsiderada(s)` : 'Saídas no período';
+
   // LTM combo
   const labels = [], admData = [], demData = [], rateData = [];
   for(let i=11;i>=0;i--){
@@ -1603,6 +1689,103 @@ function recalcTurnover(){
   state.charts.byCargo.data.labels = cargoEntries.map(e=>e.label);
   state.charts.byCargo.data.datasets[0].data = cargoEntries.map(e=>e.value);
   state.charts.byCargo.update();
+}
+
+/* =========================================================
+   14.5 MODAL DE AJUSTE DE ADMISSÕES/DEMISSÕES
+   ========================================================= */
+function openAdjustModal(type){
+  const stores = STORE_KEYS.filter(k=>state.selectedStores.has(k));
+  const {year, month} = state.selectedMonth;
+  const isAdm = type === 'adm';
+  const list = isAdm ? getAdmissoesListMes(stores, year, month) : getDemissoesListMes(stores, year, month);
+  const exclSet = isAdm ? state.excludedAdm : state.excludedDem;
+  const titulo = isAdm ? 'Admissões' : 'Demissões';
+  const compLabel = fmtMonth(year, month);
+
+  const overlay = document.createElement('div');
+  overlay.className = 'modal-overlay';
+  overlay.innerHTML = `
+    <div class="modal-box">
+      <div class="modal-head">
+        <h3>${titulo} — ${compLabel}</h3>
+        <button class="modal-close" title="Fechar">✕</button>
+      </div>
+      <div class="modal-toolbar">
+        <div>
+          <a data-action="all">Marcar todos</a>
+          <a data-action="none">Desmarcar todos</a>
+        </div>
+        <span class="modal-count"></span>
+      </div>
+      <div class="modal-list"></div>
+      <div class="modal-foot">
+        <button class="btn btn-primary modal-done">Concluir</button>
+      </div>
+    </div>
+  `;
+
+  const listEl = overlay.querySelector('.modal-list');
+  const countEl = overlay.querySelector('.modal-count');
+
+  function refreshCount(){
+    const total = list.length;
+    const considered = list.filter(i=>!exclSet.has(i.key)).length;
+    countEl.textContent = `${considered} de ${total} considerado(s) no turnover`;
+  }
+
+  function renderList(){
+    if(!list.length){
+      listEl.innerHTML = `<div style="padding:24px;text-align:center;color:var(--muted);font-size:13px;">Nenhum evento de ${titulo.toLowerCase()} nas lojas filtradas nessa competência.</div>`;
+      refreshCount();
+      return;
+    }
+    listEl.innerHTML = list.map(item=>{
+      const dt = isAdm ? item.r.admissao : item.r.rescisao;
+      const checked = !exclSet.has(item.key);
+      return `
+        <label class="modal-item ${checked?'':'excluded'}" data-key="${item.key}">
+          <input type="checkbox" ${checked?'checked':''}/>
+          <div>
+            <div class="mi-nome">${item.r.nome}</div>
+            <div class="mi-det">${item.r.storeKey} · ${item.r.cargo || 'Cargo não informado'} · ${fmtDateBR(dt)}</div>
+          </div>
+        </label>
+      `;
+    }).join('');
+    refreshCount();
+
+    listEl.querySelectorAll('.modal-item').forEach(el=>{
+      const cb = el.querySelector('input');
+      cb.addEventListener('change', ()=>{
+        const key = el.dataset.key;
+        if(cb.checked) exclSet.delete(key);
+        else exclSet.add(key);
+        el.classList.toggle('excluded', !cb.checked);
+        refreshCount();
+        recalcTurnover(); // atualiza KPIs e gráficos em tempo real
+      });
+    });
+  }
+
+  overlay.querySelector('[data-action=all]').onclick = ()=>{
+    list.forEach(i=>exclSet.delete(i.key));
+    renderList();
+    recalcTurnover();
+  };
+  overlay.querySelector('[data-action=none]').onclick = ()=>{
+    list.forEach(i=>exclSet.add(i.key));
+    renderList();
+    recalcTurnover();
+  };
+
+  function close(){ overlay.remove(); }
+  overlay.querySelector('.modal-close').onclick = close;
+  overlay.querySelector('.modal-done').onclick = close;
+  overlay.addEventListener('click', e=>{ if(e.target===overlay) close(); });
+
+  renderList();
+  document.body.appendChild(overlay);
 }
 
 /* =========================================================
@@ -1723,6 +1906,8 @@ function setupAfterLoad(){
   state.availableMonths = computeAvailableMonths(state.records);
   state.selectedMonth = state.availableMonths[0] || {year:new Date().getFullYear(), month:new Date().getMonth()};
   state.selectedStores = new Set(STORE_KEYS);
+  state.excludedAdm = new Set();
+  state.excludedDem = new Set();
   const uz = document.getElementById('uploadZone');
   uz.style.display='none';
   uz.innerHTML='';
