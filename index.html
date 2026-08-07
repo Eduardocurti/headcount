@@ -429,6 +429,15 @@ const METAS_HISTORY = {
   '19-CABANA CAMPO BELO':     [
     { from:{year:2026,month:6}, lideranca:3, salao:14, cozinha:12 } // nova loja a partir de Jul/2026
   ],
+  '10-CABANA COZINHA CENTRAL': [
+    { from:EPOCH, lideranca:0, salao:0, cozinha:0 } // estrutura industrial: sem meta de Liderança/Salão/Cozinha de loja — acompanhar via filtro de Centro de Custo
+  ],
+  '01-CABANA MATRIZ': [
+    { from:EPOCH, lideranca:0, salao:0, cozinha:0 } // estrutura administrativa/corporativa — sem meta de loja
+  ],
+  '01-CABANA BURGER FRANQUIAS': [
+    { from:EPOCH, lideranca:0, salao:0, cozinha:0 } // estrutura administrativa/corporativa — sem meta de loja
+  ],
 };
 const STORE_KEYS = Object.keys(METAS_HISTORY);
 const ORCADO_FACTOR = 1 - 0.085; // Quadro Orçado = Meta * 91,5%
@@ -481,6 +490,7 @@ const state = {
   availableMonths: [],    // [{year,month}] desc
   selectedMonth: null,
   selectedStores: new Set(STORE_KEYS),
+  selectedCentrosCusto: new Set(), // populado após carregar a base (todos selecionados por padrão)
   sortDir: null, // null | 'asc' | 'desc'
   diagSortDir: null, // ordenação do heatmap pela coluna Média: null | 'asc' | 'desc'
   activeTab: 'headcount',
@@ -494,6 +504,11 @@ const state = {
    ========================================================= */
 function normalize(s){
   return (s===null||s===undefined) ? '' : s.toString().trim().toUpperCase().replace(/\s+/g,' ');
+}
+
+// Verifica se o centro de custo do registro está entre os selecionados no filtro
+function centroCustoAllowed(r){
+  return state.selectedCentrosCusto.has(normalize(r.centroCusto));
 }
 
 function excelSerialToDate(serial){
@@ -687,6 +702,7 @@ function getCountsForStoreMonth(storeKey, year, month){
   const seenArea = {lideranca:new Set(), salao:new Set(), cozinha:new Set()};
   for(const r of state.records){
     if(r.storeKey !== storeKey) continue;
+    if(!centroCustoAllowed(r)) continue;
     if(r.admissao && monthKey(r.admissao) > targetKey) continue;   // admitido depois do mês avaliado
     if(r.rescisao && monthKey(r.rescisao) <= targetKey) continue;  // rescisão no próprio mês avaliado ou antes (dia não importa)
     // sem Dt Rescisão, ou rescisão em mês posterior ao avaliado => considera ativo
@@ -720,6 +736,7 @@ function getAdmissoesDemissoesMes(stores, year, month){
   const seenAdm = new Set(), seenDem = new Set();
   state.records.forEach(r=>{
     if(!r.storeKey || !stores.includes(r.storeKey)) return;
+    if(!centroCustoAllowed(r)) return;
     if(r.admissao && r.admissao.getFullYear()===year && r.admissao.getMonth()===month){
       const admKey = admEventKey(r);
       if(!seenAdm.has(admKey) && !state.excludedAdm.has(admKey)){ seenAdm.add(admKey); adm++; }
@@ -738,6 +755,7 @@ function getAdmissoesListMes(stores, year, month){
   const list = [];
   state.records.forEach(r=>{
     if(!r.storeKey || !stores.includes(r.storeKey)) return;
+    if(!centroCustoAllowed(r)) return;
     if(!r.admissao || r.admissao.getFullYear()!==year || r.admissao.getMonth()!==month) return;
     const key = admEventKey(r);
     if(seen.has(key)) return;
@@ -752,6 +770,7 @@ function getDemissoesListMes(stores, year, month){
   const list = [];
   state.records.forEach(r=>{
     if(!r.storeKey || !stores.includes(r.storeKey)) return;
+    if(!centroCustoAllowed(r)) return;
     if(!r.rescisao || r.rescisao.getFullYear()!==year || r.rescisao.getMonth()!==month) return;
     const key = demEventKey(r);
     if(seen.has(key)) return;
@@ -797,6 +816,7 @@ function getDismissalsInWindow(stores, year, month, monthsWindow){
   const result = [];
   state.records.forEach(r=>{
     if(!r.storeKey || !stores.includes(r.storeKey)) return;
+    if(!centroCustoAllowed(r)) return;
     if(!r.rescisao) return;
     if(r.rescisao < start || r.rescisao > end) return;
     const key = demEventKey(r);
@@ -959,6 +979,17 @@ function renderDashboardShell(){
               <a id="deselectAllStores">Desmarcar todas</a>
             </div>
             <div id="storeOptions"></div>
+          </div>
+        </div>
+        <div class="filter-block store-dropdown">
+          <label>Centro de Custo</label>
+          <div class="store-dropdown-btn" id="ccDropdownBtn"><span id="ccDropdownLabel">Todos os centros de custo</span><span>▾</span></div>
+          <div class="store-panel" id="ccPanel">
+            <div class="store-panel-actions">
+              <a id="selectAllCC">Selecionar todos</a>
+              <a id="deselectAllCC">Desmarcar todos</a>
+            </div>
+            <div id="ccOptions"></div>
           </div>
         </div>
         <div class="filter-apply">
@@ -1221,45 +1252,109 @@ function renderDashboardShell(){
   const selectedIdx = state.availableMonths.findIndex(m=>m.year===state.selectedMonth.year && m.month===state.selectedMonth.month);
   monthSelect.value = selectedIdx>=0 ? selectedIdx : 0;
 
-  // Store options
+  // Store options (ordenadas alfabeticamente)
+  const sortedStoreKeys = [...STORE_KEYS].sort((a,b)=>a.localeCompare(b));
   const storeOptions = document.getElementById('storeOptions');
-  storeOptions.innerHTML = STORE_KEYS.map(key=>`
-    <label class="store-opt">
-      <input type="checkbox" value="${key}" ${state.selectedStores.has(key)?'checked':''}/>
-      <span>${key}</span>
-    </label>
-  `).join('');
+  function renderStoreOptions(){
+    storeOptions.innerHTML = sortedStoreKeys.map(key=>`
+      <label class="store-opt">
+        <input type="checkbox" value="${key}" ${state.selectedStores.has(key)?'checked':''}/>
+        <span>${key}</span>
+      </label>
+    `).join('');
+    storeOptions.querySelectorAll('input[type=checkbox]').forEach(cb=>{
+      cb.addEventListener('change', ()=>{
+        if(cb.checked) state.selectedStores.add(cb.value);
+        else state.selectedStores.delete(cb.value);
+        updateStoreDropdownLabel();
+        onStoreSelectionChanged();
+      });
+    });
+  }
+  renderStoreOptions();
   updateStoreDropdownLabel();
 
   // Dropdown toggle
   const panel = document.getElementById('storePanel');
   document.getElementById('storeDropdownBtn').onclick = (e)=>{
     e.stopPropagation();
+    document.getElementById('ccPanel').classList.remove('open');
     panel.classList.toggle('open');
   };
   document.addEventListener('click', (e)=>{
     if(!panel.contains(e.target) && e.target.id!=='storeDropdownBtn') panel.classList.remove('open');
   });
 
-  storeOptions.querySelectorAll('input[type=checkbox]').forEach(cb=>{
-    cb.addEventListener('change', ()=>{
-      if(cb.checked) state.selectedStores.add(cb.value);
-      else state.selectedStores.delete(cb.value);
-      updateStoreDropdownLabel();
-      recalcAll();
-    });
-  });
-
   document.getElementById('selectAllStores').onclick = ()=>{
     STORE_KEYS.forEach(k=>state.selectedStores.add(k));
     storeOptions.querySelectorAll('input[type=checkbox]').forEach(cb=>cb.checked=true);
     updateStoreDropdownLabel();
-    recalcAll();
+    onStoreSelectionChanged();
   };
   document.getElementById('deselectAllStores').onclick = ()=>{
     state.selectedStores.clear();
     storeOptions.querySelectorAll('input[type=checkbox]').forEach(cb=>cb.checked=false);
     updateStoreDropdownLabel();
+    onStoreSelectionChanged();
+  };
+
+  // Centro de Custo options — dependem das lojas selecionadas no momento
+  const ccOptions = document.getElementById('ccOptions');
+  const ccPanel = document.getElementById('ccPanel');
+
+  function renderCCOptions(){
+    const ccList = getCentroCustoOptions();
+    // Mantém seleção anterior quando o centro de custo ainda está disponível; novos entram marcados
+    const prevSelected = state.selectedCentrosCusto;
+    state.selectedCentrosCusto = new Set(ccList.filter(cc=>prevSelected.has(cc) || !prevSelected.size));
+    // Se a lista mudou e nada da seleção anterior sobrou, seleciona tudo por padrão
+    if(state.selectedCentrosCusto.size === 0 && ccList.length){
+      state.selectedCentrosCusto = new Set(ccList);
+    }
+    ccOptions.innerHTML = ccList.map(cc=>`
+      <label class="store-opt">
+        <input type="checkbox" value="${cc.replace(/"/g,'&quot;')}" ${state.selectedCentrosCusto.has(cc)?'checked':''}/>
+        <span>${cc || '(Sem centro de custo)'}</span>
+      </label>
+    `).join('');
+    updateCCDropdownLabel();
+    ccOptions.querySelectorAll('input[type=checkbox]').forEach(cb=>{
+      cb.addEventListener('change', ()=>{
+        if(cb.checked) state.selectedCentrosCusto.add(cb.value);
+        else state.selectedCentrosCusto.delete(cb.value);
+        updateCCDropdownLabel();
+        recalcAll();
+      });
+    });
+  }
+
+  function onStoreSelectionChanged(){
+    renderCCOptions(); // a lista de centros de custo disponíveis muda com as lojas selecionadas
+    recalcAll();
+  }
+
+  renderCCOptions();
+
+  document.getElementById('ccDropdownBtn').onclick = (e)=>{
+    e.stopPropagation();
+    panel.classList.remove('open');
+    ccPanel.classList.toggle('open');
+  };
+  document.addEventListener('click', (e)=>{
+    if(!ccPanel.contains(e.target) && e.target.id!=='ccDropdownBtn') ccPanel.classList.remove('open');
+  });
+
+  document.getElementById('selectAllCC').onclick = ()=>{
+    const ccList = getCentroCustoOptions();
+    ccList.forEach(cc=>state.selectedCentrosCusto.add(cc));
+    ccOptions.querySelectorAll('input[type=checkbox]').forEach(cb=>cb.checked=true);
+    updateCCDropdownLabel();
+    recalcAll();
+  };
+  document.getElementById('deselectAllCC').onclick = ()=>{
+    state.selectedCentrosCusto.clear();
+    ccOptions.querySelectorAll('input[type=checkbox]').forEach(cb=>cb.checked=false);
+    updateCCDropdownLabel();
     recalcAll();
   };
 
@@ -1325,6 +1420,25 @@ function updateStoreDropdownLabel(){
   if(n === STORE_KEYS.length) label.textContent = 'Todas as lojas';
   else if(n === 0) label.textContent = 'Nenhuma loja selecionada';
   else label.textContent = n + ' loja(s) selecionada(s)';
+}
+
+function getCentroCustoOptions(){
+  const set = new Set();
+  state.records.forEach(r=>{
+    if(!r.storeKey || !state.selectedStores.has(r.storeKey)) return;
+    set.add(normalize(r.centroCusto));
+  });
+  return Array.from(set).sort((a,b)=>a.localeCompare(b));
+}
+
+function updateCCDropdownLabel(){
+  const label = document.getElementById('ccDropdownLabel');
+  if(!label) return;
+  const total = getCentroCustoOptions().length;
+  const n = state.selectedCentrosCusto.size;
+  if(n === total) label.textContent = 'Todos os centros de custo';
+  else if(n === 0) label.textContent = 'Nenhum centro de custo selecionado';
+  else label.textContent = n + ' selecionado(s)';
 }
 
 /* =========================================================
@@ -1626,6 +1740,7 @@ function getActiveEmployeesForMonth(stores, year, month){
   const list = [];
   for(const r of state.records){
     if(!r.storeKey || !stores.includes(r.storeKey)) continue;
+    if(!centroCustoAllowed(r)) continue;
     if(r.admissao && monthKey(r.admissao) > targetKey) continue;
     if(r.rescisao && monthKey(r.rescisao) <= targetKey) continue;
     const personKey = r.storeKey + '|' + normalize(r.nome);
@@ -1937,6 +2052,7 @@ function getAdmissoesYTDStore(storeKey, year, month){
   const seen = new Set(); let count = 0;
   state.records.forEach(r=>{
     if(r.storeKey !== storeKey) return;
+    if(!centroCustoAllowed(r)) return;
     if(!r.admissao || r.admissao.getFullYear() !== year || r.admissao.getMonth() > month) return;
     const key = admEventKey(r);
     if(seen.has(key) || state.excludedAdm.has(key)) return;
@@ -2406,6 +2522,7 @@ function setupAfterLoad(){
   state.availableMonths = computeAvailableMonths(state.records);
   state.selectedMonth = state.availableMonths[0] || {year:new Date().getFullYear(), month:new Date().getMonth()};
   state.selectedStores = new Set(STORE_KEYS);
+  state.selectedCentrosCusto = new Set(getCentroCustoOptions());
   state.excludedAdm = new Set();
   state.excludedDem = new Set();
   const uz = document.getElementById('uploadZone');
