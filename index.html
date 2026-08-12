@@ -136,6 +136,14 @@
   .store-opt:hover{background:var(--green-bg);}
   .store-opt input{accent-color:var(--green);width:15px;height:15px;}
   .filter-apply{flex:0 0 auto;}
+  .bu-pills{display:flex;gap:6px;flex-wrap:wrap;}
+  .bu-pill{
+    font-family:inherit;font-size:12.5px;font-weight:600;cursor:pointer;
+    border:1.5px solid var(--green-border);border-radius:999px;padding:8px 14px;
+    background:#fff;color:var(--text);transition:all .12s ease;white-space:nowrap;
+  }
+  .bu-pill:hover{background:var(--green-bg);}
+  .bu-pill.active{background:var(--green);color:#fff;border-color:var(--green);}
 
   /* ---------- KPIs ---------- */
   .kpi-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:16px;margin-bottom:22px;}
@@ -442,6 +450,18 @@ const METAS_HISTORY = {
 const STORE_KEYS = Object.keys(METAS_HISTORY);
 const ORCADO_FACTOR = 1 - 0.085; // Quadro Orçado = Meta * 91,5%
 
+// ---- Business Units ----
+const BU_MAP = {
+  'Operações': STORE_KEYS.filter(k => k !== '10-CABANA COZINHA CENTRAL' && k !== '01-CABANA MATRIZ' && k !== '01-CABANA BURGER FRANQUIAS'),
+  'Cozinha Central': ['10-CABANA COZINHA CENTRAL'],
+  'Casa Cabana': ['01-CABANA MATRIZ', '01-CABANA BURGER FRANQUIAS'],
+};
+const BU_NAMES = Object.keys(BU_MAP);
+function storeToBU(storeKey){
+  for(const bu of BU_NAMES){ if(BU_MAP[bu].includes(storeKey)) return bu; }
+  return null;
+}
+
 function monthKeyOf(year, month){ return year*12 + month; }
 
 // Retorna a versão de meta vigente para a loja numa competência (year, month), ou null se a loja ainda não existia
@@ -490,6 +510,7 @@ const state = {
   availableMonths: [],    // [{year,month}] desc
   selectedMonth: null,
   selectedStores: new Set(STORE_KEYS),
+  selectedBU: 'Todas', // 'Todas' | 'Operações' | 'Cozinha Central' | 'Casa Cabana'
   selectedCentrosCusto: new Set(), // populado após carregar a base (todos selecionados por padrão)
   sortDir: null, // null | 'asc' | 'desc'
   diagSortDir: null, // ordenação do heatmap pela coluna Média: null | 'asc' | 'desc'
@@ -967,6 +988,10 @@ function renderDashboardShell(){
     <div class="card filters-card">
       <div class="filters-grid">
         <div class="filter-block">
+          <label>BU</label>
+          <div class="bu-pills" id="buPills"></div>
+        </div>
+        <div class="filter-block">
           <label>Mês de referência</label>
           <select id="monthSelect"></select>
         </div>
@@ -1252,6 +1277,37 @@ function renderDashboardShell(){
   const selectedIdx = state.availableMonths.findIndex(m=>m.year===state.selectedMonth.year && m.month===state.selectedMonth.month);
   monthSelect.value = selectedIdx>=0 ? selectedIdx : 0;
 
+  // BU pills — atalho que marca as lojas da BU selecionada no filtro de Lojas
+  const buPillsEl = document.getElementById('buPills');
+  const BU_OPTIONS = ['Todas', ...BU_NAMES];
+  function detectActiveBU(){
+    if(state.selectedStores.size === STORE_KEYS.length) return 'Todas';
+    for(const bu of BU_NAMES){
+      const set = BU_MAP[bu];
+      if(set.length === state.selectedStores.size && set.every(k=>state.selectedStores.has(k))) return bu;
+    }
+    return null;
+  }
+  function updateBUPillsUI(){
+    const active = detectActiveBU();
+    buPillsEl.querySelectorAll('.bu-pill').forEach(p=>{
+      p.classList.toggle('active', p.dataset.bu === active);
+    });
+  }
+  buPillsEl.innerHTML = BU_OPTIONS.map(name=>`<button type="button" class="bu-pill" data-bu="${name}">${name}</button>`).join('');
+  buPillsEl.querySelectorAll('.bu-pill').forEach(p=>{
+    p.onclick = ()=>{
+      const bu = p.dataset.bu;
+      state.selectedBU = bu;
+      state.selectedStores = new Set(bu === 'Todas' ? STORE_KEYS : BU_MAP[bu]);
+      renderStoreOptions();
+      updateStoreDropdownLabel();
+      updateBUPillsUI();
+      onStoreSelectionChanged();
+    };
+  });
+  updateBUPillsUI();
+
   // Store options (ordenadas alfabeticamente)
   const sortedStoreKeys = [...STORE_KEYS].sort((a,b)=>a.localeCompare(b));
   const storeOptions = document.getElementById('storeOptions');
@@ -1267,6 +1323,7 @@ function renderDashboardShell(){
         if(cb.checked) state.selectedStores.add(cb.value);
         else state.selectedStores.delete(cb.value);
         updateStoreDropdownLabel();
+        updateBUPillsUI();
         onStoreSelectionChanged();
       });
     });
@@ -1289,12 +1346,14 @@ function renderDashboardShell(){
     STORE_KEYS.forEach(k=>state.selectedStores.add(k));
     storeOptions.querySelectorAll('input[type=checkbox]').forEach(cb=>cb.checked=true);
     updateStoreDropdownLabel();
+    updateBUPillsUI();
     onStoreSelectionChanged();
   };
   document.getElementById('deselectAllStores').onclick = ()=>{
     state.selectedStores.clear();
     storeOptions.querySelectorAll('input[type=checkbox]').forEach(cb=>cb.checked=false);
     updateStoreDropdownLabel();
+    updateBUPillsUI();
     onStoreSelectionChanged();
   };
 
