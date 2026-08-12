@@ -419,9 +419,15 @@ const METAS_HISTORY = {
     { from:EPOCH,              lideranca:4, salao:11, cozinha:12 },
     { from:{year:2026,month:7}, lideranca:4, salao:10, cozinha:17 } // meta ajustada a partir de Ago/2026
   ],
-  '22-CABANA PINHEIROS':      [{ from:EPOCH, lideranca:4,  salao:13, cozinha:14 }],
+  '22-CABANA PINHEIROS':      [
+    { from:EPOCH,              lideranca:4, salao:13, cozinha:14 },
+    { from:{year:2026,month:7}, lideranca:4, salao:10, cozinha:17 } // meta ajustada a partir de Ago/2026
+  ],
   '02-CABANA LEOPOLDO':       [{ from:EPOCH, lideranca:4,  salao:12, cozinha:15 }],
-  '17-CABANA STO ANDRE':      [{ from:EPOCH, lideranca:3,  salao:7,  cozinha:8  }],
+  '17-CABANA STO ANDRE':      [
+    { from:EPOCH,              lideranca:3, salao:7, cozinha:8 },
+    { from:{year:2026,month:7}, lideranca:0, salao:0, cozinha:0 } // zerada a partir de Ago/2026
+  ],
   '07-CABANA SHOP VL LOBOS':  [{ from:EPOCH, lideranca:3,  salao:7,  cozinha:7  }],
   '15-CABANA SHOP ELDORADO':  [{ from:EPOCH, lideranca:3,  salao:7,  cozinha:8  }],
   '11-CABANA ALPHAVILLE':     [{ from:EPOCH, lideranca:3,  salao:10, cozinha:11 }],
@@ -435,7 +441,11 @@ const METAS_HISTORY = {
   '05-CABANA BARRA SHOP':     [{ from:EPOCH, lideranca:3,  salao:12, cozinha:13 }],
   '13-CABANA CAMPINAS':       [{ from:EPOCH, lideranca:3,  salao:8,  cozinha:8  }],
   '19-CABANA CAMPO BELO':     [
-    { from:{year:2026,month:6}, lideranca:3, salao:14, cozinha:12 } // nova loja a partir de Jul/2026
+    { from:{year:2026,month:6}, lideranca:3, salao:14, cozinha:12 }, // vigente Jul/2026
+    { from:{year:2026,month:7}, lideranca:3, salao:8,  cozinha:12 }  // meta ajustada a partir de Ago/2026
+  ],
+  '23-CABANA BOTAFOGO':       [
+    { from:{year:2026,month:9}, lideranca:3, salao:10, cozinha:10 } // nova loja a partir de Out/2026
   ],
   '10-CABANA COZINHA CENTRAL': [
     { from:EPOCH, lideranca:0, salao:0, cozinha:0 } // estrutura industrial: sem meta de Liderança/Salão/Cozinha de loja — acompanhar via filtro de Centro de Custo
@@ -460,6 +470,61 @@ const BU_NAMES = Object.keys(BU_MAP);
 function storeToBU(storeKey){
   for(const bu of BU_NAMES){ if(BU_MAP[bu].includes(storeKey)) return bu; }
   return null;
+}
+
+// ---- Sub-unidades da Cozinha Central (meta em modelo Liderança/Equipe, não Liderança/Salão/Cozinha) ----
+// Identificadas pelo Centro de Custo (não por Nome Fantasia, já que todo mundo ali é "10-CABANA COZINHA CENTRAL").
+// Dentro de cada sub-unidade, Liderança é identificada pelo Cargo (não existe um Centro de Custo próprio de liderança lá).
+const COZINHA_CENTRAL_SUBUNITS = {
+  '01-PRODUÇÃO':  { keywords:['PRODUÇÃO','PRODUCAO','PROD DISTRIB'], versions:[{ from:{year:2026,month:6}, lideranca:3, equipe:20 }] },
+  '02-LOGÍSTICA': { keywords:['LOGÍSTICA','LOGISTICA'],              versions:[{ from:{year:2026,month:6}, lideranca:3, equipe:7  }] },
+};
+const COZINHA_CENTRAL_SUBUNIT_KEYS = Object.keys(COZINHA_CENTRAL_SUBUNITS);
+const LIDERANCA_CARGO_KEYWORDS = ['LIDER','LÍDER','SUPERVISOR','COORDENADOR','GERENTE'];
+
+function classifyCentralSubunit(centroCusto){
+  const cc = normalize(centroCusto);
+  for(const name of COZINHA_CENTRAL_SUBUNIT_KEYS){
+    if(COZINHA_CENTRAL_SUBUNITS[name].keywords.some(k=>cc.includes(normalize(k)))) return name;
+  }
+  return null; // outros centros de custo da Cozinha Central (Manutenção, Eventos, Diretoria etc.) — sem meta definida
+}
+function isCargoLideranca(cargo){
+  const c = normalize(cargo);
+  return LIDERANCA_CARGO_KEYWORDS.some(k=>c.includes(k));
+}
+function getMetaForSubunitMonth(name, year, month){
+  const def = COZINHA_CENTRAL_SUBUNITS[name];
+  if(!def) return null;
+  const targetKey = year*12 + month;
+  let best=null, bestKey=-Infinity;
+  for(const v of def.versions){
+    const k = v.from.year*12 + v.from.month;
+    if(k<=targetKey && k>bestKey){ best=v; bestKey=k; }
+  }
+  return best;
+}
+// Conta ativos da Cozinha Central agrupados por sub-unidade, com Liderança/Equipe por cargo
+function getCozinhaCentralCounts(year, month){
+  const targetKey = year*12 + month;
+  const result = {};
+  COZINHA_CENTRAL_SUBUNIT_KEYS.forEach(name=>{ result[name] = {lideranca:0, equipe:0, total:0}; });
+  result['Outros'] = {lideranca:0, equipe:0, total:0};
+  const seen = {}; Object.keys(result).forEach(k=>seen[k]=new Set());
+  state.records.forEach(r=>{
+    if(r.storeKey !== '10-CABANA COZINHA CENTRAL') return;
+    if(r.admissao && monthKey(r.admissao) > targetKey) return;
+    if(r.rescisao && monthKey(r.rescisao) <= targetKey) return;
+    if(!centroCustoAllowed(r)) return;
+    const sub = classifyCentralSubunit(r.centroCusto) || 'Outros';
+    const pkey = normalize(r.nome);
+    if(seen[sub].has(pkey)) return;
+    seen[sub].add(pkey);
+    result[sub].total++;
+    if(isCargoLideranca(r.cargo)) result[sub].lideranca++;
+    else result[sub].equipe++;
+  });
+  return result;
 }
 
 function monthKeyOf(year, month){ return year*12 + month; }
@@ -532,6 +597,14 @@ function centroCustoAllowed(r){
   return state.selectedCentrosCusto.has(normalize(r.centroCusto));
 }
 
+// Verifica se a sub-unidade da Cozinha Central tem algum centro de custo dela selecionado no filtro
+function subunitSelected(name){
+  for(const cc of state.selectedCentrosCusto){
+    if(classifyCentralSubunit(cc) === name) return true;
+  }
+  return false;
+}
+
 function excelSerialToDate(serial){
   const utcDays = Math.floor(serial - 25569);
   const utcValue = utcDays * 86400;
@@ -574,15 +647,26 @@ function matchStoreKey(lojaRaw){
   for(const key of STORE_KEYS){
     if(normalize(key)===n) return key;
   }
+  // Remove o código numérico ("23-") do início, pra comparar só o nome
+  const stripCode = s => s.replace(/^\d+-\s*/,'');
+  // Remove também a palavra "CABANA", pra tolerar bases que a omitem (ex: "23-BOTAFOGO" vs "23-CABANA BOTAFOGO")
+  const stripCabana = s => stripCode(s).replace(/^CABANA\s+/,'').trim();
+
+  const nNoCode = stripCode(n);
+  const nCore = stripCabana(n);
+
   for(const key of STORE_KEYS){
     const nk = normalize(key);
-    const keyNoCode = nk.replace(/^\d+-\s*/,'');
-    if(keyNoCode===n) return key;
+    if(stripCode(nk) === nNoCode) return key;
   }
   for(const key of STORE_KEYS){
     const nk = normalize(key);
-    const keyNoCode = nk.replace(/^\d+-\s*/,'');
-    if(n.includes(keyNoCode) || keyNoCode.includes(n)) return key;
+    if(stripCabana(nk) === nCore) return key;
+  }
+  for(const key of STORE_KEYS){
+    const nk = normalize(key);
+    const keyCore = stripCabana(nk);
+    if(nCore.includes(keyCore) || keyCore.includes(nCore)) return key;
   }
   return null;
 }
@@ -875,7 +959,37 @@ function countByKey(list, keyFn){
   return map;
 }
 
+function getCurrentMode(){
+  const ccSet = BU_MAP['Cozinha Central'];
+  if(state.selectedStores.size === ccSet.length && ccSet.every(k=>state.selectedStores.has(k))){
+    return 'lideq';
+  }
+  return 'areas';
+}
+
+function buildRowsCC(){
+  const {year, month} = state.selectedMonth;
+  const counts = getCozinhaCentralCounts(year, month);
+  const rows = [];
+  COZINHA_CENTRAL_SUBUNIT_KEYS.forEach(name=>{
+    if(!subunitSelected(name)) return; // filtro de Centro de Custo excluiu essa sub-unidade (meta some junto com o real)
+    const metaVersion = getMetaForSubunitMonth(name, year, month);
+    const real = counts[name];
+    if(!metaVersion && real.total===0) return;
+    const meta = metaVersion || {lideranca:0, equipe:0};
+    const mTotal = meta.lideranca + meta.equipe;
+    rows.push({storeKey:name, meta, mTotal, real, dif: real.total-mTotal, mode:'lideq'});
+  });
+  if(counts['Outros'] && counts['Outros'].total>0){
+    rows.push({storeKey:'Outros (sem meta)', meta:{lideranca:0,equipe:0}, mTotal:0, real:counts['Outros'], dif:counts['Outros'].total, mode:'lideq'});
+  }
+  if(state.sortDir === 'asc') rows.sort((a,b)=> a.dif - b.dif);
+  else if(state.sortDir === 'desc') rows.sort((a,b)=> b.dif - a.dif);
+  return rows;
+}
+
 function buildRows(){
+  if(getCurrentMode() === 'lideq') return buildRowsCC();
   const stores = STORE_KEYS.filter(k=>state.selectedStores.has(k));
   const {year, month} = state.selectedMonth;
   const rows = stores
@@ -887,7 +1001,7 @@ function buildRows(){
       if(!metaVersion && real.total === 0) return null; // loja de fato ainda não existe nessa competência
       const meta = metaVersion || {lideranca:0, salao:0, cozinha:0};
       const mTotal = meta.lideranca + meta.salao + meta.cozinha;
-      return {storeKey, meta, mTotal, real, dif: real.total - mTotal};
+      return {storeKey, meta, mTotal, real, dif: real.total - mTotal, mode:'areas'};
     })
     .filter(Boolean);
   if(state.sortDir === 'asc') rows.sort((a,b)=> a.dif - b.dif);
@@ -1101,22 +1215,7 @@ function renderDashboardShell(){
         </div>
         <div class="table-scroll">
           <table class="hc-table">
-            <thead>
-              <tr>
-                <th rowspan="2" class="loja-head">LOJA</th>
-                <th colspan="2">LIDERANÇA</th>
-                <th colspan="2">SALÃO</th>
-                <th colspan="2">COZINHA</th>
-                <th colspan="2">TOTAL</th>
-                <th rowspan="2">DIF</th>
-              </tr>
-              <tr class="subrow">
-                <th>Meta</th><th>Real</th>
-                <th>Meta</th><th>Real</th>
-                <th>Meta</th><th>Real</th>
-                <th>Meta</th><th>Real</th>
-              </tr>
-            </thead>
+            <thead id="tableHead"></thead>
             <tbody id="tableBody"></tbody>
           </table>
         </div>
@@ -1651,29 +1750,35 @@ function ltmLabelPlugin(){
    ========================================================= */
 function recalcAll(){
   const rows = buildRows();
-  const totalMeta = {lideranca:0, salao:0, cozinha:0, total:0};
-  const totalReal = {lideranca:0, salao:0, cozinha:0, total:0};
+  const mode = getCurrentMode();
+  const totalMeta = {lideranca:0, salao:0, cozinha:0, equipe:0, total:0};
+  const totalReal = {lideranca:0, salao:0, cozinha:0, equipe:0, total:0};
   rows.forEach(r=>{
     totalMeta.lideranca += r.meta.lideranca;
-    totalMeta.salao += r.meta.salao;
-    totalMeta.cozinha += r.meta.cozinha;
-    totalMeta.total += r.mTotal;
     totalReal.lideranca += r.real.lideranca;
-    totalReal.salao += r.real.salao;
-    totalReal.cozinha += r.real.cozinha;
+    if(r.mode === 'lideq'){
+      totalMeta.equipe += r.meta.equipe;
+      totalReal.equipe += r.real.equipe;
+    } else {
+      totalMeta.salao += r.meta.salao;
+      totalMeta.cozinha += r.meta.cozinha;
+      totalReal.salao += r.real.salao;
+      totalReal.cozinha += r.real.cozinha;
+    }
+    totalMeta.total += r.mTotal;
     totalReal.total += r.real.total;
   });
 
   renderKPIs(totalMeta, totalReal, rows);
-  renderTable(rows, totalMeta, totalReal);
-  updateChartArea(totalMeta, totalReal);
-  updateChartPct(totalMeta, totalReal);
+  renderTable(rows, totalMeta, totalReal, mode);
+  updateChartArea(totalMeta, totalReal, mode);
+  updateChartPct(totalMeta, totalReal, mode);
   updateChartLTM(totalMeta.total);
   recalcTurnover();
   recalcDiagnostico();
 
   document.getElementById('exportHeaderSub').textContent =
-    `${fmtMonth(state.selectedMonth.year, state.selectedMonth.month)} · ${rows.length} loja(s) · gerado em ${fmtDateBR(new Date())}`;
+    `${fmtMonth(state.selectedMonth.year, state.selectedMonth.month)} · ${rows.length} ${mode==='lideq'?'unidade(s)':'loja(s)'} · gerado em ${fmtDateBR(new Date())}`;
 }
 
 function renderKPIs(totalMeta, totalReal, rows){
@@ -1698,7 +1803,45 @@ function renderKPIs(totalMeta, totalReal, rows){
   document.getElementById('kpiLojasMeta').textContent = `${onTarget} de ${rows.length}`;
 }
 
-function renderTable(rows, totalMeta, totalReal){
+function renderTableHead(mode){
+  const thead = document.getElementById('tableHead');
+  if(mode === 'lideq'){
+    thead.innerHTML = `
+      <tr>
+        <th rowspan="2" class="loja-head">UNIDADE</th>
+        <th colspan="2">LIDERANÇA</th>
+        <th colspan="2">EQUIPE</th>
+        <th colspan="2">TOTAL</th>
+        <th rowspan="2">DIF</th>
+      </tr>
+      <tr class="subrow">
+        <th>Meta</th><th>Real</th>
+        <th>Meta</th><th>Real</th>
+        <th>Meta</th><th>Real</th>
+      </tr>
+    `;
+  } else {
+    thead.innerHTML = `
+      <tr>
+        <th rowspan="2" class="loja-head">LOJA</th>
+        <th colspan="2">LIDERANÇA</th>
+        <th colspan="2">SALÃO</th>
+        <th colspan="2">COZINHA</th>
+        <th colspan="2">TOTAL</th>
+        <th rowspan="2">DIF</th>
+      </tr>
+      <tr class="subrow">
+        <th>Meta</th><th>Real</th>
+        <th>Meta</th><th>Real</th>
+        <th>Meta</th><th>Real</th>
+        <th>Meta</th><th>Real</th>
+      </tr>
+    `;
+  }
+}
+
+function renderTable(rows, totalMeta, totalReal, mode){
+  renderTableHead(mode);
   const tbody = document.getElementById('tableBody');
   function cell(real, meta){
     const cls = real >= meta ? 'real-ok' : 'real-bad';
@@ -1709,34 +1852,73 @@ function renderTable(rows, totalMeta, totalReal){
     const label = dif>0? '+'+dif : dif;
     return `<span class="dif-badge ${cls}">${label}</span>`;
   }
+  const unitLabel = mode === 'lideq' ? 'unidade(s)' : 'lojas';
   let html = '';
   rows.forEach(r=>{
-    html += `<tr>
-      <td class="loja-cell">${r.storeKey}</td>
-      ${cell(r.real.lideranca, r.meta.lideranca)}
-      ${cell(r.real.salao, r.meta.salao)}
-      ${cell(r.real.cozinha, r.meta.cozinha)}
-      ${cell(r.real.total, r.mTotal)}
-      <td>${difBadge(r.dif)}</td>
-    </tr>`;
+    if(mode === 'lideq'){
+      html += `<tr>
+        <td class="loja-cell">${r.storeKey}</td>
+        ${cell(r.real.lideranca, r.meta.lideranca)}
+        ${cell(r.real.equipe, r.meta.equipe)}
+        ${cell(r.real.total, r.mTotal)}
+        <td>${difBadge(r.dif)}</td>
+      </tr>`;
+    } else {
+      html += `<tr>
+        <td class="loja-cell">${r.storeKey}</td>
+        ${cell(r.real.lideranca, r.meta.lideranca)}
+        ${cell(r.real.salao, r.meta.salao)}
+        ${cell(r.real.cozinha, r.meta.cozinha)}
+        ${cell(r.real.total, r.mTotal)}
+        <td>${difBadge(r.dif)}</td>
+      </tr>`;
+    }
   });
   const totalDif = totalReal.total - totalMeta.total;
-  html += `<tr class="total-row">
-    <td class="loja-cell">TOTAL (${rows.length} lojas)</td>
-    <td>${totalMeta.lideranca}</td><td>${totalReal.lideranca}</td>
-    <td>${totalMeta.salao}</td><td>${totalReal.salao}</td>
-    <td>${totalMeta.cozinha}</td><td>${totalReal.cozinha}</td>
-    <td>${totalMeta.total}</td><td>${totalReal.total}</td>
-    <td>${difBadge(totalDif)}</td>
-  </tr>`;
+  if(mode === 'lideq'){
+    html += `<tr class="total-row">
+      <td class="loja-cell">TOTAL (${rows.length} ${unitLabel})</td>
+      <td>${totalMeta.lideranca}</td><td>${totalReal.lideranca}</td>
+      <td>${totalMeta.equipe}</td><td>${totalReal.equipe}</td>
+      <td>${totalMeta.total}</td><td>${totalReal.total}</td>
+      <td>${difBadge(totalDif)}</td>
+    </tr>`;
+  } else {
+    html += `<tr class="total-row">
+      <td class="loja-cell">TOTAL (${rows.length} ${unitLabel})</td>
+      <td>${totalMeta.lideranca}</td><td>${totalReal.lideranca}</td>
+      <td>${totalMeta.salao}</td><td>${totalReal.salao}</td>
+      <td>${totalMeta.cozinha}</td><td>${totalReal.cozinha}</td>
+      <td>${totalMeta.total}</td><td>${totalReal.total}</td>
+      <td>${difBadge(totalDif)}</td>
+    </tr>`;
+  }
   tbody.innerHTML = html;
 }
 
-function updateChartArea(totalMeta, totalReal){
+function updateChartArea(totalMeta, totalReal, mode){
   const chart = state.charts.area;
-  const metaData = [totalMeta.lideranca, totalMeta.salao, totalMeta.cozinha];
+  let labels, metaData, realData;
+  if(mode === 'lideq'){
+    labels = ['Liderança','Equipe'];
+    metaData = [totalMeta.lideranca, totalMeta.equipe];
+    realData = [totalReal.lideranca, totalReal.equipe];
+  } else {
+    labels = ['Liderança','Salão e Delivery','Cozinha e Bar'];
+    metaData = [totalMeta.lideranca, totalMeta.salao, totalMeta.cozinha];
+    realData = [totalReal.lideranca, totalReal.salao, totalReal.cozinha];
+    // "Outros": headcount real que existe mas não se encaixa em Liderança/Salão/Cozinha
+    // (ex.: Matriz, Burger Franquias — sem essa estrutura). Nunca fica escondido.
+    const outrosReal = totalReal.total - (totalReal.lideranca + totalReal.salao + totalReal.cozinha);
+    const outrosMeta = totalMeta.total - (totalMeta.lideranca + totalMeta.salao + totalMeta.cozinha);
+    if(outrosReal > 0 || outrosMeta > 0){
+      labels = [...labels, 'Outros'];
+      metaData = [...metaData, outrosMeta];
+      realData = [...realData, outrosReal];
+    }
+  }
   const orcadoData = metaData.map(v=>Math.round(v*ORCADO_FACTOR));
-  const realData = [totalReal.lideranca, totalReal.salao, totalReal.cozinha];
+  chart.data.labels = labels;
   chart.data.datasets[0].data = metaData;
   chart.data.datasets[1].data = orcadoData;
   chart.data.datasets[2].data = realData;
@@ -1744,15 +1926,31 @@ function updateChartArea(totalMeta, totalReal){
   chart.update();
 }
 
-function updateChartPct(totalMeta, totalReal){
+function updateChartPct(totalMeta, totalReal, mode){
   const chart = state.charts.pct;
-  const metaVals = [totalMeta.lideranca,totalMeta.salao,totalMeta.cozinha];
+  let labels, metaVals, realVals;
+  if(mode === 'lideq'){
+    labels = ['Liderança','Equipe'];
+    metaVals = [totalMeta.lideranca, totalMeta.equipe];
+    realVals = [totalReal.lideranca, totalReal.equipe];
+  } else {
+    labels = ['Liderança','Salão e Delivery','Cozinha e Bar'];
+    metaVals = [totalMeta.lideranca,totalMeta.salao,totalMeta.cozinha];
+    realVals = [totalReal.lideranca,totalReal.salao,totalReal.cozinha];
+    const outrosReal = totalReal.total - (totalReal.lideranca + totalReal.salao + totalReal.cozinha);
+    const outrosMeta = totalMeta.total - (totalMeta.lideranca + totalMeta.salao + totalMeta.cozinha);
+    if(outrosMeta > 0){
+      labels = [...labels, 'Outros'];
+      metaVals = [...metaVals, outrosMeta];
+      realVals = [...realVals, outrosReal];
+    }
+  }
   const orcadoVals = metaVals.map(v=>Math.round(v*ORCADO_FACTOR));
-  const realVals = [totalReal.lideranca,totalReal.salao,totalReal.cozinha];
 
   const pctMeta = realVals.map((real,i)=> metaVals[i]>0 ? Math.round((real/metaVals[i])*100) : 0);
   const pctOrcado = realVals.map((real,i)=> orcadoVals[i]>0 ? Math.round((real/orcadoVals[i])*100) : 0);
 
+  chart.data.labels = labels;
   chart.data.datasets[0].data = pctMeta;
   chart.data.datasets[0].backgroundColor = pctMeta.map(v=> v>=100 ? '#0A6B2C' : '#FF5028');
   chart.data.datasets[1].data = pctOrcado;
@@ -1763,6 +1961,7 @@ function updateChartPct(totalMeta, totalReal){
 function updateChartLTM(currentMetaTotal){
   const chart = state.charts.ltm;
   const {year, month} = state.selectedMonth;
+  const isCC = getCurrentMode() === 'lideq';
   const stores = STORE_KEYS.filter(k=>state.selectedStores.has(k));
 
   const labels = [];
@@ -1774,10 +1973,21 @@ function updateChartLTM(currentMetaTotal){
     labels.push(fmtMonth(y,m));
     let sum = 0;
     let metaSum = 0;
-    stores.forEach(k=>{
-      sum += getCountsForStoreMonth(k,y,m).total;
-      metaSum += metaTotalForMonth(k,y,m);
-    });
+    if(isCC){
+      const counts = getCozinhaCentralCounts(y, m);
+      COZINHA_CENTRAL_SUBUNIT_KEYS.forEach(name=>{
+        if(!subunitSelected(name)) return;
+        sum += counts[name].total;
+        const mv = getMetaForSubunitMonth(name, y, m);
+        if(mv) metaSum += mv.lideranca + mv.equipe;
+      });
+      sum += counts['Outros'].total;
+    } else {
+      stores.forEach(k=>{
+        sum += getCountsForStoreMonth(k,y,m).total;
+        metaSum += metaTotalForMonth(k,y,m);
+      });
+    }
     realData.push(sum);
     metaData.push(metaSum);
     orcadoData.push(Math.round(metaSum * ORCADO_FACTOR));
