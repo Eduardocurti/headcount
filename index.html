@@ -459,14 +459,20 @@ const METAS_HISTORY = {
 };
 const STORE_KEYS = Object.keys(METAS_HISTORY);
 const ORCADO_FACTOR = 1 - 0.085; // Quadro Orçado = Meta * 91,5%
+// Na Cozinha Central (modo lideq), Quadro Orçado = Meta Quadro (sem desconto)
+function orcadoFactorFor(mode){ return mode === 'lideq' ? 1 : ORCADO_FACTOR; }
 
 // ---- Business Units ----
 const BU_MAP = {
   'Operações': STORE_KEYS.filter(k => k !== '10-CABANA COZINHA CENTRAL' && k !== '01-CABANA MATRIZ' && k !== '01-CABANA BURGER FRANQUIAS'),
   'Cozinha Central': ['10-CABANA COZINHA CENTRAL'],
-  'Casa Cabana': ['01-CABANA MATRIZ', '01-CABANA BURGER FRANQUIAS'],
+  // 'Casa Cabana' ocultada por hora (a pedido) — mantida aqui comentada para religar facilmente depois.
+  // 'Casa Cabana': ['01-CABANA MATRIZ', '01-CABANA BURGER FRANQUIAS'],
 };
 const BU_NAMES = Object.keys(BU_MAP);
+// Lojas ocultas da UI (filtros, KPIs e gráficos) por hora — permanecem em METAS_HISTORY para religar facilmente depois.
+const HIDDEN_STORES = ['01-CABANA MATRIZ', '01-CABANA BURGER FRANQUIAS'];
+const VISIBLE_STORE_KEYS = STORE_KEYS.filter(k => !HIDDEN_STORES.includes(k));
 function storeToBU(storeKey){
   for(const bu of BU_NAMES){ if(BU_MAP[bu].includes(storeKey)) return bu; }
   return null;
@@ -476,8 +482,8 @@ function storeToBU(storeKey){
 // Identificadas pelo Centro de Custo (não por Nome Fantasia, já que todo mundo ali é "10-CABANA COZINHA CENTRAL").
 // Dentro de cada sub-unidade, Liderança é identificada pelo Cargo (não existe um Centro de Custo próprio de liderança lá).
 const COZINHA_CENTRAL_SUBUNITS = {
-  '01-PRODUÇÃO':  { keywords:['PRODUÇÃO','PRODUCAO','PROD DISTRIB'], versions:[{ from:{year:2026,month:6}, lideranca:3, equipe:20 }] },
-  '02-LOGÍSTICA': { keywords:['LOGÍSTICA','LOGISTICA'],              versions:[{ from:{year:2026,month:6}, lideranca:3, equipe:7  }] },
+  '01-PRODUÇÃO':  { keywords:['PRODUÇÃO','PRODUCAO','PROD DISTRIB'], versions:[{ from:{year:2026,month:0}, lideranca:3, equipe:20 }] }, // vale para todos os meses de 2026
+  '02-LOGÍSTICA': { keywords:['LOGÍSTICA','LOGISTICA'],              versions:[{ from:{year:2026,month:0}, lideranca:3, equipe:7  }] }, // vale para todos os meses de 2026
 };
 const COZINHA_CENTRAL_SUBUNIT_KEYS = Object.keys(COZINHA_CENTRAL_SUBUNITS);
 const LIDERANCA_CARGO_KEYWORDS = ['LIDER','LÍDER','SUPERVISOR','COORDENADOR','GERENTE'];
@@ -574,7 +580,7 @@ const state = {
   importedAt: null,
   availableMonths: [],    // [{year,month}] desc
   selectedMonth: null,
-  selectedStores: new Set(STORE_KEYS),
+  selectedStores: new Set(VISIBLE_STORE_KEYS),
   selectedBU: 'Todas', // 'Todas' | 'Operações' | 'Cozinha Central' | 'Casa Cabana'
   selectedCentrosCusto: new Set(), // populado após carregar a base (todos selecionados por padrão)
   sortDir: null, // null | 'asc' | 'desc'
@@ -1380,7 +1386,7 @@ function renderDashboardShell(){
   const buPillsEl = document.getElementById('buPills');
   const BU_OPTIONS = ['Todas', ...BU_NAMES];
   function detectActiveBU(){
-    if(state.selectedStores.size === STORE_KEYS.length) return 'Todas';
+    if(state.selectedStores.size === VISIBLE_STORE_KEYS.length) return 'Todas';
     for(const bu of BU_NAMES){
       const set = BU_MAP[bu];
       if(set.length === state.selectedStores.size && set.every(k=>state.selectedStores.has(k))) return bu;
@@ -1398,7 +1404,7 @@ function renderDashboardShell(){
     p.onclick = ()=>{
       const bu = p.dataset.bu;
       state.selectedBU = bu;
-      state.selectedStores = new Set(bu === 'Todas' ? STORE_KEYS : BU_MAP[bu]);
+      state.selectedStores = new Set(bu === 'Todas' ? VISIBLE_STORE_KEYS : BU_MAP[bu]);
       renderStoreOptions();
       updateStoreDropdownLabel();
       updateBUPillsUI();
@@ -1408,7 +1414,7 @@ function renderDashboardShell(){
   updateBUPillsUI();
 
   // Store options (ordenadas alfabeticamente)
-  const sortedStoreKeys = [...STORE_KEYS].sort((a,b)=>a.localeCompare(b));
+  const sortedStoreKeys = [...VISIBLE_STORE_KEYS].sort((a,b)=>a.localeCompare(b));
   const storeOptions = document.getElementById('storeOptions');
   function renderStoreOptions(){
     storeOptions.innerHTML = sortedStoreKeys.map(key=>`
@@ -1442,7 +1448,7 @@ function renderDashboardShell(){
   });
 
   document.getElementById('selectAllStores').onclick = ()=>{
-    STORE_KEYS.forEach(k=>state.selectedStores.add(k));
+    VISIBLE_STORE_KEYS.forEach(k=>state.selectedStores.add(k));
     storeOptions.querySelectorAll('input[type=checkbox]').forEach(cb=>cb.checked=true);
     updateStoreDropdownLabel();
     updateBUPillsUI();
@@ -1575,7 +1581,7 @@ function updateSortButtonLabel(){
 function updateStoreDropdownLabel(){
   const label = document.getElementById('storeDropdownLabel');
   const n = state.selectedStores.size;
-  if(n === STORE_KEYS.length) label.textContent = 'Todas as lojas';
+  if(n === VISIBLE_STORE_KEYS.length) label.textContent = 'Todas as lojas';
   else if(n === 0) label.textContent = 'Nenhuma loja selecionada';
   else label.textContent = n + ' loja(s) selecionada(s)';
 }
@@ -1769,7 +1775,7 @@ function recalcAll(){
     totalReal.total += r.real.total;
   });
 
-  renderKPIs(totalMeta, totalReal, rows);
+  renderKPIs(totalMeta, totalReal, rows, mode);
   renderTable(rows, totalMeta, totalReal, mode);
   updateChartArea(totalMeta, totalReal, mode);
   updateChartPct(totalMeta, totalReal, mode);
@@ -1781,10 +1787,10 @@ function recalcAll(){
     `${fmtMonth(state.selectedMonth.year, state.selectedMonth.month)} · ${rows.length} ${mode==='lideq'?'unidade(s)':'loja(s)'} · gerado em ${fmtDateBR(new Date())}`;
 }
 
-function renderKPIs(totalMeta, totalReal, rows){
+function renderKPIs(totalMeta, totalReal, rows, mode){
   document.getElementById('kpiMeta').textContent = totalMeta.total;
 
-  const orcado = Math.round(totalMeta.total * ORCADO_FACTOR);
+  const orcado = Math.round(totalMeta.total * orcadoFactorFor(mode));
   document.getElementById('kpiOrcado').textContent = orcado;
 
   document.getElementById('kpiReal').textContent = totalReal.total;
@@ -1917,7 +1923,7 @@ function updateChartArea(totalMeta, totalReal, mode){
       realData = [...realData, outrosReal];
     }
   }
-  const orcadoData = metaData.map(v=>Math.round(v*ORCADO_FACTOR));
+  const orcadoData = metaData.map(v=>Math.round(v*orcadoFactorFor(mode)));
   chart.data.labels = labels;
   chart.data.datasets[0].data = metaData;
   chart.data.datasets[1].data = orcadoData;
@@ -1945,7 +1951,7 @@ function updateChartPct(totalMeta, totalReal, mode){
       realVals = [...realVals, outrosReal];
     }
   }
-  const orcadoVals = metaVals.map(v=>Math.round(v*ORCADO_FACTOR));
+  const orcadoVals = metaVals.map(v=>Math.round(v*orcadoFactorFor(mode)));
 
   const pctMeta = realVals.map((real,i)=> metaVals[i]>0 ? Math.round((real/metaVals[i])*100) : 0);
   const pctOrcado = realVals.map((real,i)=> orcadoVals[i]>0 ? Math.round((real/orcadoVals[i])*100) : 0);
@@ -1990,7 +1996,7 @@ function updateChartLTM(currentMetaTotal){
     }
     realData.push(sum);
     metaData.push(metaSum);
-    orcadoData.push(Math.round(metaSum * ORCADO_FACTOR));
+    orcadoData.push(Math.round(metaSum * (isCC ? 1 : ORCADO_FACTOR)));
   }
   chart.data.labels = labels;
   chart.data.datasets[0].data = realData;
@@ -2790,7 +2796,7 @@ async function loadFromServer(){
 function setupAfterLoad(){
   state.availableMonths = computeAvailableMonths(state.records);
   state.selectedMonth = state.availableMonths[0] || {year:new Date().getFullYear(), month:new Date().getMonth()};
-  state.selectedStores = new Set(STORE_KEYS);
+  state.selectedStores = new Set(VISIBLE_STORE_KEYS);
   state.selectedCentrosCusto = new Set(getCentroCustoOptions());
   state.excludedAdm = new Set();
   state.excludedDem = new Set();
