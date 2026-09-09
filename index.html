@@ -445,7 +445,7 @@ const METAS_HISTORY = {
     { from:{year:2026,month:7}, lideranca:3, salao:8,  cozinha:12 }  // meta ajustada a partir de Ago/2026
   ],
   '23-CABANA BOTAFOGO':       [
-    { from:{year:2026,month:9}, lideranca:3, salao:10, cozinha:10 } // nova loja a partir de Out/2026
+    { from:{year:2026,month:7}, lideranca:3, salao:10, cozinha:10 } // meta vigente a partir de Ago/2026
   ],
   '10-CABANA COZINHA CENTRAL': [
     { from:EPOCH, lideranca:0, salao:0, cozinha:0 } // estrutura industrial: sem meta de Liderança/Salão/Cozinha de loja — acompanhar via filtro de Centro de Custo
@@ -458,9 +458,14 @@ const METAS_HISTORY = {
   ],
 };
 const STORE_KEYS = Object.keys(METAS_HISTORY);
-const ORCADO_FACTOR = 1 - 0.085; // Quadro Orçado = Meta * 91,5%
-// Na Cozinha Central (modo lideq), Quadro Orçado = Meta Quadro (sem desconto)
+const ORCADO_FACTOR = 1 - 0.085; // Quadro Orçado = Meta * 91,5% (aplicado só fora da Liderança)
+// Na Cozinha Central (modo lideq), Quadro Orçado = Meta Quadro (sem desconto, em toda a estrutura)
 function orcadoFactorFor(mode){ return mode === 'lideq' ? 1 : ORCADO_FACTOR; }
+// Liderança Orçada = Liderança Meta (sem desconto), em qualquer loja/BU. O desconto de 8,5%
+// (ou nenhum, na Cozinha Central) vale só para o restante do quadro (Salão+Cozinha ou Equipe).
+function orcadoTotalFrom(totalMetaLideranca, totalMetaRestante, mode){
+  return totalMetaLideranca + Math.round(totalMetaRestante * orcadoFactorFor(mode));
+}
 
 // ---- Business Units ----
 const BU_MAP = {
@@ -1468,11 +1473,15 @@ function renderDashboardShell(){
 
   function renderCCOptions(){
     const ccList = getCentroCustoOptions();
-    // Mantém seleção anterior quando o centro de custo ainda está disponível; novos entram marcados
     const prevSelected = state.selectedCentrosCusto;
-    state.selectedCentrosCusto = new Set(ccList.filter(cc=>prevSelected.has(cc) || !prevSelected.size));
-    // Se a lista mudou e nada da seleção anterior sobrou, seleciona tudo por padrão
-    if(state.selectedCentrosCusto.size === 0 && ccList.length){
+    // Só preserva a seleção anterior se o conjunto de opções disponíveis não mudou
+    // (ex.: o usuário desmarcou um checkbox manualmente). Se a lista de opções mudou
+    // (ex.: troca de BU/loja com centros de custo diferentes), reseta para tudo selecionado.
+    // Preservar a interseção nesse caso já causou um bug grave: ao trocar de Cozinha Central
+    // para Operações, "Liderança Loja"/"Salão e Delivery"/"Cozinha e Bar" ficavam de fora
+    // (não estavam na seleção anterior, restrita a Produção/Logística), zerando o real das lojas.
+    const isSameOptionSet = ccList.length === prevSelected.size && ccList.every(cc => prevSelected.has(cc));
+    if(!isSameOptionSet){
       state.selectedCentrosCusto = new Set(ccList);
     }
     ccOptions.innerHTML = ccList.map(cc=>`
@@ -1790,7 +1799,7 @@ function recalcAll(){
 function renderKPIs(totalMeta, totalReal, rows, mode){
   document.getElementById('kpiMeta').textContent = totalMeta.total;
 
-  const orcado = Math.round(totalMeta.total * orcadoFactorFor(mode));
+  const orcado = orcadoTotalFrom(totalMeta.lideranca, totalMeta.total - totalMeta.lideranca, mode);
   document.getElementById('kpiOrcado').textContent = orcado;
 
   document.getElementById('kpiReal').textContent = totalReal.total;
@@ -1923,7 +1932,7 @@ function updateChartArea(totalMeta, totalReal, mode){
       realData = [...realData, outrosReal];
     }
   }
-  const orcadoData = metaData.map(v=>Math.round(v*orcadoFactorFor(mode)));
+  const orcadoData = metaData.map((v,i)=> i===0 ? v : Math.round(v*orcadoFactorFor(mode)));
   chart.data.labels = labels;
   chart.data.datasets[0].data = metaData;
   chart.data.datasets[1].data = orcadoData;
@@ -1951,7 +1960,7 @@ function updateChartPct(totalMeta, totalReal, mode){
       realVals = [...realVals, outrosReal];
     }
   }
-  const orcadoVals = metaVals.map(v=>Math.round(v*orcadoFactorFor(mode)));
+  const orcadoVals = metaVals.map((v,i)=> i===0 ? v : Math.round(v*orcadoFactorFor(mode)));
 
   const pctMeta = realVals.map((real,i)=> metaVals[i]>0 ? Math.round((real/metaVals[i])*100) : 0);
   const pctOrcado = realVals.map((real,i)=> orcadoVals[i]>0 ? Math.round((real/orcadoVals[i])*100) : 0);
@@ -1979,24 +1988,27 @@ function updateChartLTM(currentMetaTotal){
     labels.push(fmtMonth(y,m));
     let sum = 0;
     let metaSum = 0;
+    let liderancaSum = 0;
     if(isCC){
       const counts = getCozinhaCentralCounts(y, m);
       COZINHA_CENTRAL_SUBUNIT_KEYS.forEach(name=>{
         if(!subunitSelected(name)) return;
         sum += counts[name].total;
         const mv = getMetaForSubunitMonth(name, y, m);
-        if(mv) metaSum += mv.lideranca + mv.equipe;
+        if(mv){ metaSum += mv.lideranca + mv.equipe; liderancaSum += mv.lideranca; }
       });
       sum += counts['Outros'].total;
     } else {
       stores.forEach(k=>{
         sum += getCountsForStoreMonth(k,y,m).total;
         metaSum += metaTotalForMonth(k,y,m);
+        const mv = getMetaForStoreMonth(k,y,m);
+        if(mv) liderancaSum += mv.lideranca;
       });
     }
     realData.push(sum);
     metaData.push(metaSum);
-    orcadoData.push(Math.round(metaSum * (isCC ? 1 : ORCADO_FACTOR)));
+    orcadoData.push(orcadoTotalFrom(liderancaSum, metaSum - liderancaSum, isCC ? 'lideq' : 'areas'));
   }
   chart.data.labels = labels;
   chart.data.datasets[0].data = realData;
@@ -2723,10 +2735,10 @@ async function handleSyncClick(){
     if(ok){
       alert('Base sincronizada com sucesso a partir do servidor.');
     } else {
-      alert('Não encontrei a base no servidor.\n\nVerifique no seu repositório do GitHub:\n1. Existe uma pasta chamada "data" (minúscula) na MESMA pasta do index.html?\n2. Dentro dela existe o arquivo "dados.xlsx" (nome exato, minúsculo)?\n3. O GitHub Pages terminou de publicar? (pode levar 1-2 min após o commit)');
+      alert('Não encontrei a base em "./data/dados.xlsx" no GitHub.\n\nVerifique se o robô de sincronização (GitHub Actions) já rodou pelo menos uma vez, ou use "Carregar Excel" para importar manualmente por enquanto.');
     }
   }catch(e){
-    alert('Não foi possível sincronizar com o servidor agora.');
+    alert('Não foi possível sincronizar agora.');
   }finally{
     btn.innerHTML = original;
     btn.disabled = false;
@@ -2758,9 +2770,17 @@ function initBrandBar(){
 /* =========================================================
    16. BOOTSTRAP
    ========================================================= */
-// Caminhos onde o arquivo da base pode estar no servidor (GitHub Pages).
+// Caminhos onde o arquivo da base fica no GitHub Pages. Um robô Python (rodando
+// via GitHub Actions) mantém data/dados.xlsx sincronizado a partir do OneDrive —
+// o painel só precisa saber procurar aqui, sem se preocupar com OneDrive/CORS.
 // Atenção: GitHub Pages diferencia maiúsculas/minúsculas no caminho!
 const SERVER_DATA_PATHS = ['./data/dados.xlsx', './dados.xlsx', './Data/dados.xlsx', './data/Dados.xlsx'];
+
+function isValidXlsxBuffer(buf){
+  // valida assinatura de arquivo xlsx (ZIP começa com "PK")
+  const bytes = new Uint8Array(buf.slice(0,2));
+  return bytes[0]===0x50 && bytes[1]===0x4B;
+}
 
 async function fetchServerBase(){
   for(const path of SERVER_DATA_PATHS){
@@ -2768,9 +2788,7 @@ async function fetchServerBase(){
       const resp = await fetch(path, {cache:'no-store'});
       if(!resp.ok) continue;
       const buf = await resp.arrayBuffer();
-      // valida assinatura de arquivo xlsx (ZIP começa com "PK")
-      const bytes = new Uint8Array(buf.slice(0,2));
-      if(!(bytes[0]===0x50 && bytes[1]===0x4B)) continue;
+      if(!isValidXlsxBuffer(buf)) continue;
       const lastModHeader = resp.headers.get('Last-Modified');
       const lastMod = lastModHeader ? new Date(lastModHeader) : null;
       return {buf, lastMod, path};
@@ -2788,7 +2806,7 @@ async function loadFromServer(){
   state.source = 'server';
   state.importedAt = new Date();
   state.dataUpdatedAt = found.lastMod || new Date();
-  await idbSet('main', {records, importedAt:state.importedAt, source:'server', dataUpdatedAt:state.dataUpdatedAt});
+  await idbSet('main', {records, importedAt:state.importedAt, source:state.source, dataUpdatedAt:state.dataUpdatedAt});
   setupAfterLoad();
   return true;
 }
