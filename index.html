@@ -417,7 +417,8 @@ const METAS_HISTORY = {
   '30-CABANA MORUMBI TOWN':   [{ from:EPOCH, lideranca:3,  salao:7,  cozinha:7  }],
   '08-CABANA OSCAR FREIRE':   [
     { from:EPOCH,              lideranca:4, salao:11, cozinha:12 },
-    { from:{year:2026,month:7}, lideranca:4, salao:10, cozinha:17 } // meta ajustada a partir de Ago/2026
+    { from:{year:2026,month:7}, lideranca:4, salao:10, cozinha:17 }, // meta ajustada a partir de Ago/2026
+    { from:{year:2026,month:9}, lideranca:3, salao:10, cozinha:11 }  // -1 coordenador e -6 na cozinha, a partir de Out/2026
   ],
   '22-CABANA PINHEIROS':      [
     { from:EPOCH,              lideranca:4, salao:13, cozinha:14 },
@@ -442,7 +443,8 @@ const METAS_HISTORY = {
   '13-CABANA CAMPINAS':       [{ from:EPOCH, lideranca:3,  salao:8,  cozinha:8  }],
   '19-CABANA CAMPO BELO':     [
     { from:{year:2026,month:6}, lideranca:3, salao:14, cozinha:12 }, // vigente Jul/2026
-    { from:{year:2026,month:7}, lideranca:3, salao:8,  cozinha:12 }  // meta ajustada a partir de Ago/2026
+    { from:{year:2026,month:7}, lideranca:3, salao:8,  cozinha:12 }, // meta ajustada a partir de Ago/2026
+    { from:{year:2026,month:9}, lideranca:3, salao:10, cozinha:14 }  // meta 27, a partir de Out/2026
   ],
   '23-CABANA BOTAFOGO':       [
     { from:{year:2026,month:7}, lideranca:3, salao:10, cozinha:10 } // meta vigente a partir de Ago/2026
@@ -478,6 +480,13 @@ const BU_NAMES = Object.keys(BU_MAP);
 // Lojas ocultas da UI (filtros, KPIs e gráficos) por hora — permanecem em METAS_HISTORY para religar facilmente depois.
 const HIDDEN_STORES = ['01-CABANA MATRIZ', '01-CABANA BURGER FRANQUIAS'];
 const VISIBLE_STORE_KEYS = STORE_KEYS.filter(k => !HIDDEN_STORES.includes(k));
+// Lojas que NÃO vêm selecionadas por padrão (nem em "Todas", "Operações" ou "Selecionar todas").
+// O usuário pode marcá-las manualmente no filtro de Lojas quando quiser analisá-las.
+const DEFAULT_OFF_STORES = ['17-CABANA STO ANDRE', '24-CABANA RIB. PRETO'];
+const DEFAULT_STORE_KEYS = VISIBLE_STORE_KEYS.filter(k => !DEFAULT_OFF_STORES.includes(k));
+function defaultStoresForBU(bu){
+  return bu === 'Todas' ? DEFAULT_STORE_KEYS : BU_MAP[bu].filter(k => !DEFAULT_OFF_STORES.includes(k));
+}
 function storeToBU(storeKey){
   for(const bu of BU_NAMES){ if(BU_MAP[bu].includes(storeKey)) return bu; }
   return null;
@@ -524,6 +533,7 @@ function getCozinhaCentralCounts(year, month){
   const seen = {}; Object.keys(result).forEach(k=>seen[k]=new Set());
   state.records.forEach(r=>{
     if(r.storeKey !== '10-CABANA COZINHA CENTRAL') return;
+    if(isAprendiz(r)) return;
     if(r.admissao && monthKey(r.admissao) > targetKey) return;
     if(r.rescisao && monthKey(r.rescisao) <= targetKey) return;
     if(!centroCustoAllowed(r)) return;
@@ -585,7 +595,7 @@ const state = {
   importedAt: null,
   availableMonths: [],    // [{year,month}] desc
   selectedMonth: null,
-  selectedStores: new Set(VISIBLE_STORE_KEYS),
+  selectedStores: new Set(DEFAULT_STORE_KEYS),
   selectedBU: 'Todas', // 'Todas' | 'Operações' | 'Cozinha Central' | 'Casa Cabana'
   selectedCentrosCusto: new Set(), // populado após carregar a base (todos selecionados por padrão)
   sortDir: null, // null | 'asc' | 'desc'
@@ -606,6 +616,11 @@ function normalize(s){
 // Verifica se o centro de custo do registro está entre os selecionados no filtro
 function centroCustoAllowed(r){
   return state.selectedCentrosCusto.has(normalize(r.centroCusto));
+}
+
+// Jovem Aprendiz não faz parte da meta de quadro: não conta como ativo (card, tabela, gráficos, Gerar Base)
+function isAprendiz(r){
+  return normalize(r.cargo).includes('APRENDIZ');
 }
 
 // Verifica se a sub-unidade da Cozinha Central tem algum centro de custo dela selecionado no filtro
@@ -819,6 +834,7 @@ function getCountsForStoreMonth(storeKey, year, month){
   for(const r of state.records){
     if(r.storeKey !== storeKey) continue;
     if(!centroCustoAllowed(r)) continue;
+    if(isAprendiz(r)) continue;
     if(r.admissao && monthKey(r.admissao) > targetKey) continue;   // admitido depois do mês avaliado
     if(r.rescisao && monthKey(r.rescisao) <= targetKey) continue;  // rescisão no próprio mês avaliado ou antes (dia não importa)
     // sem Dt Rescisão, ou rescisão em mês posterior ao avaliado => considera ativo
@@ -853,6 +869,7 @@ function getAdmissoesDemissoesMes(stores, year, month){
   state.records.forEach(r=>{
     if(!r.storeKey || !stores.includes(r.storeKey)) return;
     if(!centroCustoAllowed(r)) return;
+    if(isAprendiz(r)) return; // Jovem Aprendiz não entra no turnover
     if(r.admissao && r.admissao.getFullYear()===year && r.admissao.getMonth()===month){
       const admKey = admEventKey(r);
       if(!seenAdm.has(admKey) && !state.excludedAdm.has(admKey)){ seenAdm.add(admKey); adm++; }
@@ -872,6 +889,7 @@ function getAdmissoesListMes(stores, year, month){
   state.records.forEach(r=>{
     if(!r.storeKey || !stores.includes(r.storeKey)) return;
     if(!centroCustoAllowed(r)) return;
+    if(isAprendiz(r)) return; // Jovem Aprendiz não entra no turnover
     if(!r.admissao || r.admissao.getFullYear()!==year || r.admissao.getMonth()!==month) return;
     const key = admEventKey(r);
     if(seen.has(key)) return;
@@ -887,6 +905,7 @@ function getDemissoesListMes(stores, year, month){
   state.records.forEach(r=>{
     if(!r.storeKey || !stores.includes(r.storeKey)) return;
     if(!centroCustoAllowed(r)) return;
+    if(isAprendiz(r)) return; // Jovem Aprendiz não entra no turnover
     if(!r.rescisao || r.rescisao.getFullYear()!==year || r.rescisao.getMonth()!==month) return;
     const key = demEventKey(r);
     if(seen.has(key)) return;
@@ -933,6 +952,7 @@ function getDismissalsInWindow(stores, year, month, monthsWindow){
   state.records.forEach(r=>{
     if(!r.storeKey || !stores.includes(r.storeKey)) return;
     if(!centroCustoAllowed(r)) return;
+    if(isAprendiz(r)) return; // Jovem Aprendiz não entra no turnover
     if(!r.rescisao) return;
     if(r.rescisao < start || r.rescisao > end) return;
     const key = demEventKey(r);
@@ -1391,10 +1411,10 @@ function renderDashboardShell(){
   const buPillsEl = document.getElementById('buPills');
   const BU_OPTIONS = ['Todas', ...BU_NAMES];
   function detectActiveBU(){
-    if(state.selectedStores.size === VISIBLE_STORE_KEYS.length) return 'Todas';
+    const matches = (set) => set.length === state.selectedStores.size && set.every(k=>state.selectedStores.has(k));
+    if(matches(defaultStoresForBU('Todas'))) return 'Todas';
     for(const bu of BU_NAMES){
-      const set = BU_MAP[bu];
-      if(set.length === state.selectedStores.size && set.every(k=>state.selectedStores.has(k))) return bu;
+      if(matches(defaultStoresForBU(bu))) return bu;
     }
     return null;
   }
@@ -1409,7 +1429,7 @@ function renderDashboardShell(){
     p.onclick = ()=>{
       const bu = p.dataset.bu;
       state.selectedBU = bu;
-      state.selectedStores = new Set(bu === 'Todas' ? VISIBLE_STORE_KEYS : BU_MAP[bu]);
+      state.selectedStores = new Set(defaultStoresForBU(bu));
       renderStoreOptions();
       updateStoreDropdownLabel();
       updateBUPillsUI();
@@ -1453,8 +1473,9 @@ function renderDashboardShell(){
   });
 
   document.getElementById('selectAllStores').onclick = ()=>{
-    VISIBLE_STORE_KEYS.forEach(k=>state.selectedStores.add(k));
-    storeOptions.querySelectorAll('input[type=checkbox]').forEach(cb=>cb.checked=true);
+    // "Selecionar todas" marca o conjunto padrão (sem Sto André e Rib. Preto, que só entram se marcadas manualmente)
+    state.selectedStores = new Set(DEFAULT_STORE_KEYS);
+    storeOptions.querySelectorAll('input[type=checkbox]').forEach(cb=>{ cb.checked = state.selectedStores.has(cb.value); });
     updateStoreDropdownLabel();
     updateBUPillsUI();
     onStoreSelectionChanged();
@@ -1590,7 +1611,9 @@ function updateSortButtonLabel(){
 function updateStoreDropdownLabel(){
   const label = document.getElementById('storeDropdownLabel');
   const n = state.selectedStores.size;
-  if(n === VISIBLE_STORE_KEYS.length) label.textContent = 'Todas as lojas';
+  const isDefaultAll = n === DEFAULT_STORE_KEYS.length && DEFAULT_STORE_KEYS.every(k=>state.selectedStores.has(k));
+  if(isDefaultAll) label.textContent = 'Todas (exceto Sto André e Rib. Preto)';
+  else if(n === VISIBLE_STORE_KEYS.length) label.textContent = 'Todas as lojas';
   else if(n === 0) label.textContent = 'Nenhuma loja selecionada';
   else label.textContent = n + ' loja(s) selecionada(s)';
 }
@@ -2028,6 +2051,7 @@ function getActiveEmployeesForMonth(stores, year, month){
   for(const r of state.records){
     if(!r.storeKey || !stores.includes(r.storeKey)) continue;
     if(!centroCustoAllowed(r)) continue;
+    if(isAprendiz(r)) continue;
     if(r.admissao && monthKey(r.admissao) > targetKey) continue;
     if(r.rescisao && monthKey(r.rescisao) <= targetKey) continue;
     const personKey = r.storeKey + '|' + normalize(r.nome);
@@ -2340,6 +2364,7 @@ function getAdmissoesYTDStore(storeKey, year, month){
   state.records.forEach(r=>{
     if(r.storeKey !== storeKey) return;
     if(!centroCustoAllowed(r)) return;
+    if(isAprendiz(r)) return; // Jovem Aprendiz não entra no turnover
     if(!r.admissao || r.admissao.getFullYear() !== year || r.admissao.getMonth() > month) return;
     const key = admEventKey(r);
     if(seen.has(key) || state.excludedAdm.has(key)) return;
@@ -2814,7 +2839,7 @@ async function loadFromServer(){
 function setupAfterLoad(){
   state.availableMonths = computeAvailableMonths(state.records);
   state.selectedMonth = state.availableMonths[0] || {year:new Date().getFullYear(), month:new Date().getMonth()};
-  state.selectedStores = new Set(VISIBLE_STORE_KEYS);
+  state.selectedStores = new Set(DEFAULT_STORE_KEYS);
   state.selectedCentrosCusto = new Set(getCentroCustoOptions());
   state.excludedAdm = new Set();
   state.excludedDem = new Set();
