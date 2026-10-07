@@ -1850,7 +1850,8 @@ function renderTableHead(mode){
         <th colspan="2">LIDERANÇA</th>
         <th colspan="2">EQUIPE</th>
         <th colspan="2">TOTAL</th>
-        <th rowspan="2">DIF</th>
+        <th rowspan="2">DIF META</th>
+        <th rowspan="2">DIF ORÇADO</th>
       </tr>
       <tr class="subrow">
         <th>Meta</th><th>Real</th>
@@ -1866,7 +1867,8 @@ function renderTableHead(mode){
         <th colspan="2">SALÃO</th>
         <th colspan="2">COZINHA</th>
         <th colspan="2">TOTAL</th>
-        <th rowspan="2">DIF</th>
+        <th rowspan="2">DIF META</th>
+        <th rowspan="2">DIF ORÇADO</th>
       </tr>
       <tr class="subrow">
         <th>Meta</th><th>Real</th>
@@ -1891,6 +1893,8 @@ function renderTable(rows, totalMeta, totalReal, mode){
     return `<span class="dif-badge ${cls}">${label}</span>`;
   }
   const unitLabel = mode === 'lideq' ? 'unidade(s)' : 'lojas';
+  // Diferença vs. Quadro Orçado: mesmo critério do card (Liderança = meta; resto com o fator de orçado)
+  const difOrcado = (real, meta, mTotal) => real - orcadoTotalFrom(meta.lideranca, mTotal - meta.lideranca, mode);
   let html = '';
   rows.forEach(r=>{
     if(mode === 'lideq'){
@@ -1900,6 +1904,7 @@ function renderTable(rows, totalMeta, totalReal, mode){
         ${cell(r.real.equipe, r.meta.equipe)}
         ${cell(r.real.total, r.mTotal)}
         <td>${difBadge(r.dif)}</td>
+        <td>${difBadge(difOrcado(r.real.total, r.meta, r.mTotal))}</td>
       </tr>`;
     } else {
       html += `<tr>
@@ -1909,10 +1914,12 @@ function renderTable(rows, totalMeta, totalReal, mode){
         ${cell(r.real.cozinha, r.meta.cozinha)}
         ${cell(r.real.total, r.mTotal)}
         <td>${difBadge(r.dif)}</td>
+        <td>${difBadge(difOrcado(r.real.total, r.meta, r.mTotal))}</td>
       </tr>`;
     }
   });
   const totalDif = totalReal.total - totalMeta.total;
+  const totalDifOrc = difOrcado(totalReal.total, totalMeta, totalMeta.total);
   if(mode === 'lideq'){
     html += `<tr class="total-row">
       <td class="loja-cell">TOTAL (${rows.length} ${unitLabel})</td>
@@ -1920,6 +1927,7 @@ function renderTable(rows, totalMeta, totalReal, mode){
       <td>${totalMeta.equipe}</td><td>${totalReal.equipe}</td>
       <td>${totalMeta.total}</td><td>${totalReal.total}</td>
       <td>${difBadge(totalDif)}</td>
+      <td>${difBadge(totalDifOrc)}</td>
     </tr>`;
   } else {
     html += `<tr class="total-row">
@@ -1929,6 +1937,7 @@ function renderTable(rows, totalMeta, totalReal, mode){
       <td>${totalMeta.cozinha}</td><td>${totalReal.cozinha}</td>
       <td>${totalMeta.total}</td><td>${totalReal.total}</td>
       <td>${difBadge(totalDif)}</td>
+      <td>${difBadge(totalDifOrc)}</td>
     </tr>`;
   }
   tbody.innerHTML = html;
