@@ -1,6 +1,6 @@
 {
   "versao": 1,
-  "geradoEm": "2026-11-19",
+  "geradoEm": "2026-11-25",
   "fonte": "Painel de headcount (METAS_HISTORY e COZINHA_CENTRAL_SUBUNITS do index.html)",
   "como_ler": "Para uma competência AAAA-MM, vale a versão com maior \"vigenteDesde\" menor ou igual a ela. vigenteDesde null = desde sempre. Se nenhuma versão vale, a loja ainda não tinha meta. total = soma das áreas.",
   "orcado": {
@@ -377,6 +377,20 @@
           "salao": 0,
           "cozinha": 0,
           "total": 0
+        }
+      ]
+    },
+    "16-PARKSHOPPING DE SÃO CAETANO": {
+      "bu": "Operações",
+      "exibidaNoPainel": true,
+      "selecionadaPorPadrao": true,
+      "versoes": [
+        {
+          "vigenteDesde": "2026-12",
+          "lideranca": 3,
+          "salao": 7,
+          "cozinha": 8,
+          "total": 18
         }
       ]
     }
